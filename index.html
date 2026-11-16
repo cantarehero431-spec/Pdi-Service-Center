@@ -2047,14 +2047,18 @@ function clearFormDraft(which) {
 }
 
 
-// Daftar KODE Site Resmi (Hanya Kode 3-Huruf terurut alfabetis)
+// Daftar KODE Site Resmi Sesuai Permintaan User (82 Site)
 const SITE_CODES = [
-  "ABN", "ACH", "BDG", "BDU", "BGR", "BJN", "BKL", "BKS", "BNJ", "BWI", 
-  "CDG", "CGN", "CKR", "CRB", "DPK", "DPS", "GTO", "JBI", "JBR", "JKT", 
-  "JSL", "JSS", "JTR", "KDI", "KDR", "KDS", "KLT", "KPG", "LPG", "MAK", 
-  "MAN", "MDN", "MDU", "MGL", "MLG", "MTR", "PDG", "PKB", "PKL", "PLB", 
-  "PLU", "PNP", "PPS", "PRK", "PTK", "PWT", "RTP", "SBN", "SBU", "SBY", 
-  "SKB", "SLO", "SMD", "SMG", "TGR", "TSM", "YOG"
+  "ABN", "ACH", "ALL", "BDG", "BDU", "BGR", "BJN", "BKL", "BKS", "BNJ", 
+  "BWI", "CDG", "CGN", "CKR", "CRB", "DPK", "DPS", "GTO", "JBI", "JBR", 
+  "JKT", "JSL", "JTR", "KDI", "KDR", "KDS", "KLT", "KPG", "LPG", "MAK", 
+  "MAN", "MDN", "MDU", "MGL", "MLG", "MTJ", "MTR", "PDG", "PKB", "PKL", 
+  "PLB", "PLU", "PNP", "PPS", "PRK", "PTK", "PWT", "RTP", "SBN", "SBU", 
+  "SBY", "SKB", "SLO", "SMD", "SMG", "TGR", "TSM", "YOG", "CILEUNGSI", 
+  "TEGAL", "PROBOLINGGO", "PAMEKASAN", "CIBUBUR", "CILEDUG", "CILACAP", 
+  "BALIKPN", "BUKITTGG", "BATAM", "BIMA", "LABUAN", "LUBUK", "KAYUAGUNG", 
+  "MUARA BUNGO", "METRO", "LAHAT", "BATURJ", "FLORES", "TRNATE", "BAU2", 
+  "TARAKAN", "BERAU", "BONTANG"
 ];
 
 function normalizeSite(s){
@@ -2063,9 +2067,15 @@ function normalizeSite(s){
  if(s.startsWith("PDS ")) s = s.slice(4).trim();
  if(s.startsWith("SKM-")) s = s.slice(4).trim();
  if(s.startsWith("SKM -")) s = s.slice(5).trim();
+ if(SITE_CODES.includes(s)) return s;
  const dashIdx = s.indexOf("-");
- if(dashIdx > 0) s = s.substring(0, dashIdx).trim();
- const found = SITE_CODES.find(code => code === s || s.includes(code));
+ if(dashIdx > 0){
+   const sub = s.substring(0, dashIdx).trim();
+   if(SITE_CODES.includes(sub)) return sub;
+ }
+ const found = SITE_CODES.find(code => code === s) || 
+               SITE_CODES.find(code => s.includes(code)) || 
+               SITE_CODES.find(code => code.includes(s));
  return found || s;
 }
 if ('scrollRestoration' in history) {
@@ -2166,6 +2176,10 @@ try {
 }
 
 let currentSite = normalizeSite(localStorage.getItem(SITE_STORAGE_KEY) || "");
+if (currentSite && !SITE_CODES.includes(currentSite)) {
+  currentSite = "";
+  try { localStorage.removeItem(SITE_STORAGE_KEY); } catch(e){}
+}
 let cur = "IN";
 let cat = "";
 let selectedSCL = "";
