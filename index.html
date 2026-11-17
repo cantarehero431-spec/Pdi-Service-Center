@@ -1717,8 +1717,11 @@ button.send:disabled{opacity:.5;cursor:not-allowed}
       <button type="button" class="btn-modal-x" onclick="closePrintModal()" title="Tutup">✕</button>
     </div>
 
-    <div style="margin-bottom:10px; font-size:13px;">
-      Site Service Center: <strong id="printSiteLabel" style="color:var(--red); font-size:14px;">-</strong>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-size:13px;">
+      <div>Site Service Center: <strong id="printSiteLabel" style="color:var(--red); font-size:14px;">-</strong></div>
+      <button type="button" onclick="loadPrintSclList(false, true)" title="Segarkan Data dari Google Sheets" style="background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600; color:#1e293b; cursor:pointer;">
+        🔄 Refresh
+      </button>
     </div>
 
     <label class="f" style="margin-bottom:14px; font-size:13px; font-weight:600;">Pilih No Case:
@@ -2133,24 +2136,181 @@ const CATS = [
 function isEvCategory(c) {
   if (!c) return false;
   const s = String(c).trim().toUpperCase();
-  return s.includes("EV") || s.includes("WHEEL") || s.includes("MOTOR") || s.includes("MOBIL") || s.includes("SEPEDA");
+  // JIKA NON-EV / HOME APPLIANCES / AUDIO/VIDEO -> PASTI BUKAN EV!
+  if (s.includes("NON-EV") || s.includes("NON EV") || s.includes("NON_EV") || s.includes("NONEV")) {
+    return false;
+  }
+  if (s.includes("HOME") || s.includes("APPLIANCE") || s.includes("AUDIO") || s.includes("VIDEO") || s.includes("ELEKTRONIK")) {
+    return false;
+  }
+  // Hanya true jika secara eksplisit adalah EV (Electric Vehicle: motor/sepeda listrik)
+  return s.includes("EV 2 WHEELS") || s.includes("EV 4 WHEELS") || s.includes("2 WHEEL") || s.includes("4 WHEEL") || s.includes("MOTOR LISTRIK") || s.includes("SEPEDA LISTRIK") || s === "EV" || s.startsWith("EV ") || s.endsWith(" EV") || s.includes(" EV ");
 }
+
+
+// Helper deteksi kategori otomatis berdasarkan model unit jika kategori kosong / tidak cocok
+function detectCategoryFromModel(modelStr){
+  if(!modelStr) return "";
+  const m = String(modelStr).trim().toUpperCase();
+  if(!m || m === "-") return "";
+
+  // 1. Audio / Video Polytron
+  // PAS (Active Speaker), PTS (Trolley Speaker), PMA (Multimedia Audio), PLD (LED TV), PLT, BB (Bazzoke), PHT (Home Theater), PSW (Subwoofer), PVD (DVD), PTV
+  const isAudioPrefix = ["PAS", "PS-PAS", "PTS", "PS-PTS", "PMA", "PS-PMA", "PLD", "PS-PLD", "PLT", "PS-PLT", "BB", "PS-BB", "PHT", "PS-PHT", "PSW", "PS-PSW", "PVD", "PS-PVD", "PTV", "PS-PTV"].some(p => m.startsWith(p));
+  const isAudioKeyword = ["SPEAKER", "SOUNDBAR", "SUBWOOFER", "TELEVISI", "TV", "AUDIO", "BAZZOKE", "THEATER"].some(k => m.includes(k));
+  if(isAudioPrefix || isAudioKeyword) {
+    return "AUDIO/VIDEO";
+  }
+
+  // 2. Home Appliances Polytron
+  // Kulkas (PRW, PRB, PRG, PRA, PRN, PRM, PRS), Mesin Cuci (PWM, PAW, PFL), AC (PAC), Dispenser (PWC), Water Heater (PWH), Kompor (PGA), Freezer (PFS), Showcase (SCP, SCG), Rice Cooker (PRH), Blender/Toaster/Oven/Fan/Setrika/Air Purifier
+  const isHaPrefix = ["PRW", "PS-PRW", "PRB", "PS-PRB", "PRG", "PS-PRG", "PRA", "PS-PRA", "PRN", "PS-PRN", "PRM", "PS-PRM", "PRS", "PS-PRS", "PWM", "PS-PWM", "PAW", "PS-PAW", "PFL", "PS-PFL", "PAC", "PS-PAC", "PWC", "PS-PWC", "PWH", "PS-PWH", "PGA", "PS-PGA", "PFS", "PS-PFS", "SCP", "PS-SCP", "SCG", "PS-SCG", "PRH", "PS-PRH", "PBL", "PS-PBL", "PTC", "PS-PTC", "PFP", "PS-PFP", "PFM", "PS-PFM", "PIR", "PS-PIR", "PVP", "PS-PVP", "PAI", "PS-PAI"].some(p => m.startsWith(p));
+  const isHaKeyword = ["KULKAS", "DISPENSER", "MESIN CUCI", "WASHER", "AC ", "AIR CONDITIONER", "FREEZER", "SHOWCASE", "HEATER", "KOMPOR", "RICE COOKER", "BLENDER", "OVEN", "KIPAS", "SETRIKA", "PURIFIER", "VACUUM"].some(k => m.includes(k));
+  if(isHaPrefix || isHaKeyword) {
+    return "HOME APPLIANCES";
+  }
+
+  // 3. EV Polytron (Electric Vehicles: FOX-R, FOX-S, FOX 350, FOX 500, PEV..., ROBO, T-3000, Motor Listrik, Sepeda Listrik)
+  const isEvPrefix = ["PEV", "PS-PEV"].some(p => m.startsWith(p));
+  const isEvKeyword = ["FOX-R", "FOXR", "FOX-S", "FOXS", "FOX 350", "FOX350", "FOX 500", "FOX500", "ROBO", "T-3000", "MOTOR LISTRIK", "SEPEDA LISTRIK", "ELECTRIC VEHICLE"].some(k => m.includes(k));
+  if(isEvPrefix || isEvKeyword) {
+    return "EV 2 WHEELS";
+  }
+
+  return "";
+}
+
+function detectCategory(catVal, modelVal) {
+  // 1. Coba deteksi dari model terlebih dahulu
+  const fromModel = detectCategoryFromModel(modelVal);
+
+  // 2. Normalisasi input kategori
+  let norm = normalizeCategory(catVal);
+
+  // Jika input kategori adalah "Non-EV / Elektronik" atau kosong atau "-", utamakan fromModel jika ada
+  if ((!norm || norm === "-" || catVal === "Non-EV / Elektronik" || catVal === "Non-EV" || catVal === "Elektronik") && fromModel) {
+    return fromModel;
+  }
+
+  if (norm && norm !== "-" && CATS.includes(norm)) {
+    // Jika input kategori mengatakan EV 2 WHEELS tapi modelnya jelas-jelas TV atau Kulkas, pulihkan ke model!
+    if (norm === "EV 2 WHEELS" && fromModel && fromModel !== "EV 2 WHEELS") {
+      return fromModel;
+    }
+    return norm;
+  }
+
+  return fromModel || norm || "";
+}
+
+function extractRowData(r) {
+  if(!r) return { scl:"", model:"", vin:"", layanan:"", teknisi:"", site:"", cat:"", date:"" };
+  
+  const getF = (keys) => {
+    for(let k of keys) {
+      if(r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== "") return String(r[k]).trim();
+    }
+    const rKeys = Object.keys(r);
+    for(let k of keys) {
+      const target = k.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      for(let rk of rKeys) {
+        if(rk.replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === target) {
+          if(r[rk] !== undefined && r[rk] !== null && String(r[rk]).trim() !== "") return String(r[rk]).trim();
+        }
+      }
+    }
+    return "";
+  };
+
+  const scl = getF(["No SCL", "No CASE", "NO. CASE", "No WO", "NO WO", "CASE", "SCL", "WO"]);
+  const model = getF(["Model Unit", "Model", "Tipe Unit", "Tipe", "Unit"]);
+  const vin = getF(["VIN", "No Seri", "Nomor Seri", "Serial", "Serial Number", "No. Seri"]);
+  const layanan = getF(["Jenis Layanan", "Layanan", "Service Type", "Tipe Layanan"]);
+  const teknisi = getF(["Teknisi", "Nama Teknisi", "Technician"]);
+  const site = getF(["Site Service Center", "Site", "Lokasi", "Cabang"]);
+  const rawCat = getF(["Kategori Produk", "Kategori", "Kategori Unit", "Category", "Kategori/Jenis", "Jenis Produk"]);
+  const date = getF(["Tanggal", "Waktu Submit", "Date", "Timestamp"]);
+
+  let cat = detectCategory(rawCat, model);
+
+  return { scl, model, vin, layanan, teknisi, site, cat, date };
+}
+
+function onCatOutChange(newVal){
+  if(cur !== "OUT") return;
+  const oldCat = cat;
+  const targetCat = normalizeCategory(newVal) || newVal;
+  cat = targetCat;
+
+  // Simpan nilai input form yang sedang aktif
+  const f = $("#f");
+  const currentScl = $("#sclSelect") ? $("#sclSelect").value : "";
+  const currentModel = f && f.querySelector('[name="Model Unit"]') ? f.querySelector('[name="Model Unit"]').value : "";
+  const currentVin = f && f.querySelector('[name="VIN"]') ? f.querySelector('[name="VIN"]').value : "";
+  const currentLayanan = f && f.querySelector('[name="Jenis Layanan"]') ? f.querySelector('[name="Jenis Layanan"]').value : "";
+  const currentTeknisi = $("#techSelect") ? $("#techSelect").value : "";
+
+  // Update item di pendingSCLItems jika ada
+  if(currentScl && currentScl !== "-"){
+    const item = pendingSCLItems.find(x => String(x.scl || x.wo || "").trim().toUpperCase() === String(currentScl).trim().toUpperCase());
+    if(item){
+      item.cat = targetCat;
+    }
+  }
+
+  // Jika status EV vs Non-EV berubah, render ulang checklist
+  if(isEvCategory(oldCat) !== isEvCategory(targetCat)){
+    render();
+    renderSclDropdown(pendingSCLItems, currentScl, false, false);
+    if(f){
+      if(f.querySelector('[name="Model Unit"]')) f.querySelector('[name="Model Unit"]').value = currentModel;
+      if(f.querySelector('[name="VIN"]')) f.querySelector('[name="VIN"]').value = currentVin;
+      if(f.querySelector('[name="Jenis Layanan"]')) f.querySelector('[name="Jenis Layanan"]').value = currentLayanan;
+      const catSelect = $("#catOut");
+      if(catSelect) catSelect.value = targetCat;
+      renderTechField(currentSite, currentTeknisi);
+    }
+  }
+}
+window.onCatOutChange = onCatOutChange;
 
 function normalizeCategory(raw) {
   if (!raw) return "";
   const s = String(raw).trim();
-  if (s.toLowerCase().includes("pilih")) return "";
+  if (s === "-" || s.toLowerCase().includes("pilih")) return "";
+  
+  // 1. Cek exact match dengan CATS resmi
   const exact = CATS.find(c => c.toUpperCase() === s.toUpperCase());
   if (exact) return exact;
 
   const low = s.toLowerCase();
-  if (low.includes("4 wheel") || low.includes("4w") || low.includes("mobil")) return "EV 2 WHEELS";
-  if (low.includes("2 wheel") || low.includes("2w") || low.includes("motor listrik") || low.includes("sepeda listrik")) return "EV 2 WHEELS";
-  if (low.includes("audio") || low.includes("video") || low.includes("av") || low.includes("speaker") || low.includes("tv")) return "AUDIO/VIDEO";
-  if (low.includes("home") || low.includes("appliance") || low.includes("kulkas") || low.includes("mesin cuci") || low.includes("ac")) return "HOME APPLIANCES";
 
-  if (low.includes("ev")) return "EV 2 WHEELS";
-  if (low.includes("non-ev") || low.includes("elektronik")) return "HOME APPLIANCES";
+  // 2. Wajib cek NON-EV / ELEKTRONIK terlebih dahulu sebelum mengecek EV!
+  if (low.includes("non-ev") || low.includes("non ev") || low.includes("nonev") || low.includes("elektronik")) {
+    if (low.includes("audio") || low.includes("video") || low.includes("av") || low.includes("speaker") || low.includes("tv") || low.includes("soundbar")) {
+      return "AUDIO/VIDEO";
+    }
+    return "HOME APPLIANCES";
+  }
+
+  // 3. Audio / Video
+  if (low.includes("audio") || low.includes("video") || low.includes("av") || low.includes("speaker") || low.includes("tv") || low.includes("soundbar")) {
+    return "AUDIO/VIDEO";
+  }
+
+  // 4. Home Appliances
+  if (low.includes("home") || low.includes("appliance") || low.includes("kulkas") || low.includes("mesin cuci") || low.includes("ac") || low.includes("dispenser") || low.includes("freezer") || low.includes("showcase")) {
+    return "HOME APPLIANCES";
+  }
+
+  // 5. EV 2 WHEELS (Hanya jika benar-benar EV motor/sepeda listrik)
+  if (low.includes("2 wheel") || low.includes("2w") || low.includes("motor listrik") || low.includes("sepeda listrik") || low.includes("4 wheel") || low.includes("4w")) {
+    return "EV 2 WHEELS";
+  }
+
+  if (low === "ev" || low.startsWith("ev ") || low.endsWith(" ev") || low.includes(" ev ") || low.includes("electric vehicle")) {
+    return "EV 2 WHEELS";
+  }
 
   return s.toUpperCase();
 }
@@ -2184,6 +2344,12 @@ let cur = "IN";
 let cat = "";
 let selectedSCL = "";
 let pendingSCLItems = [];
+let gvizCacheIn = null;
+let gvizCacheOut = null;
+let gvizCacheTime = 0;
+const SMART_CACHE_TTL_MS = 60000; // 60 detik (1 menit) Smart Cache pencegah download berulang
+
+
 
 const $ = s => document.querySelector(s);
 const esc = s => (s||"").replace(/"/g,"&quot;");
@@ -2238,7 +2404,7 @@ function openSiteModal(push=true){
  if(cancelBtn) cancelBtn.style.display = currentSite ? "block" : "none";
  modal.style.display="flex";
  if(push){
-  history.pushState({modal:"site", tab:cur}, "", "#modal-site");
+  safeHistoryPush({modal:"site", tab:cur}, "#modal-site");
  }
 }
 
@@ -2251,18 +2417,28 @@ function closeSiteModal(fromBack=false){
  }
 }
 
-function saveSiteSelection(){
+async function saveSiteSelection(){
  const val=$("#modalSiteSelect").value;
  if(!val) return;
- currentSite=val;
+ currentSite = normalizeSite(val);
  localStorage.setItem(SITE_STORAGE_KEY, currentSite);
  closeSiteModal();
  updateSiteUI();
  renderTechField(currentSite);
- if(cur==="OUT"){ loadSCL(); }
  const siteSelect = $("#site");
- if(siteSelect){ siteSelect.value=currentSite; }
- toast("Site berhasil disetel: " + currentSite);
+ if(siteSelect){ siteSelect.value = currentSite; }
+
+ // Reset cache data dan antrean lokal karena site berganti
+ pendingSCLItems = [];
+ gvizCacheTime = 0;
+
+ toast("Di Setel ke Site " + currentSite, "#15803d", 1500);
+
+ // Otomatis sinkronisasikan seluruh database untuk site baru
+ if(cur === "OUT"){
+   await loadSCL("", false, true);
+ }
+ syncAllDatabaseFromGoogleSheets(true);
 }
 
 function updateSiteUI(){
@@ -2800,7 +2976,7 @@ function render(preserveSCL=""){
   <fieldset class="header-box wo-box" id="sclBox">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
       <legend style="margin:0; padding:0 4px; font-weight:bold; color:var(--red);">No. Case</legend>
-      <button type="button" id="btnRefreshScl" onclick="loadSCL()" title="Segarkan Data PDI IN" style="background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:600; color:#1e293b; display:inline-flex; align-items:center; gap:4px; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+      <button type="button" id="btnRefreshScl" onclick="loadSCL('', false, true)" title="Segarkan Data PDI IN Langsung dari Google Sheets" style="background:#fff; border:1px solid #cbd5e1; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:600; color:#1e293b; display:inline-flex; align-items:center; gap:4px; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
         <span id="refreshSclIcon" style="display:inline-block;">🔄</span> REFRESH
       </button>
     </div>
@@ -2882,7 +3058,7 @@ function render(preserveSCL=""){
   // Semua kotak terisi otomatis dan BISA DIUBAH / DIEDIT (tidak readonly, tidak ada gembok)
   h += `
      <label class="f">Kategori Produk
-       <select id="catOut" name="Kategori Produk" style="text-transform:uppercase; pointer-events:none; background-color:#e9ecef;">
+       <select id="catOut" name="Kategori Produk" style="text-transform:uppercase; background-color:#ffffff; cursor:pointer;" onchange="onCatOutChange(this.value)">
          <option value="-"${(!cat || cat === "-") ? " selected" : ""}>-</option>
          ${CATS.map(c=>`<option value="${c}"${c===cat?" selected":""}>${c}</option>`).join("")}
        </select>
@@ -3130,13 +3306,16 @@ function openPrintModal(push=true) {
   if (!modal) return;
   modal.style.display = "flex";
   if (push) {
-    history.pushState({modal:"print", tab:cur}, "", "#modal-print");
+    safeHistoryPush({modal:"print", tab:cur}, "#modal-print");
   }
   
   const siteCode = normalizeSite(currentSite || ($("#site") ? $("#site").value : ""));
   $("#printSiteLabel").textContent = siteCode || "(Belum Pilih Site)";
   
-  loadPrintSclList();
+  // Smart Cache: Jika data Google Sheets sudah ada di cache (< 60 detik), buka seketika tanpa loader
+  const now = Date.now();
+  const hasFreshCache = (gvizCacheIn && gvizCacheOut && (now - gvizCacheTime < SMART_CACHE_TTL_MS));
+  loadPrintSclList(hasFreshCache, false);
 }
 
 function closePrintModal(fromBack=false) {
@@ -3144,27 +3323,30 @@ function closePrintModal(fromBack=false) {
   if (modal) modal.style.display = "none";
   if (!fromBack && location.hash === "#modal-print") {
     try {
-      history.replaceState({ tab: cur }, "", cur === "OUT" ? "#pdi-out" : "#pdi-in");
+      safeHistoryReplace({ tab: cur }, cur === "OUT" ? "#pdi-out" : "#pdi-in");
     } catch(e) {
       history.back();
     }
   }
 }
 
-async function loadPrintSclList(isSilent = false) {
+async function loadPrintSclList(isSilent = false, forceRefresh = false) {
   const sel = $("#printSclSelect");
   const prevBox = $("#printPreviewBox");
   const btnPrint = $("#btnDoPrint");
   if (!sel) return;
 
-  if (!isSilent) showLoader();
+  const siteCode = normalizeSite(currentSite || ($("#site") ? $("#site").value : ""));
+  const now = Date.now();
+  const hasFreshCache = (!forceRefresh && gvizCacheIn && gvizCacheOut && (now - gvizCacheTime < SMART_CACHE_TTL_MS));
+
+  if (!isSilent && !hasFreshCache) showLoader();
 
   sel.disabled = true;
   sel.innerHTML = '<option value="">Memuat Data..</option>';
   if (prevBox) prevBox.style.display = "none";
   if (btnPrint) btnPrint.disabled = true;
 
-  const siteCode = normalizeSite(currentSite || ($("#site") ? $("#site").value : ""));
   let sclList = [];
   const seenSCL = {};
 
@@ -3204,74 +3386,62 @@ async function loadPrintSclList(isSilent = false) {
     }
   });
 
-  // 3. Coba ambil daftar lengkap SCL untuk site ini dari Apps Script
-  try {
-    const res = await jsonp(SCRIPT_URL + "?action=get_print_list&site=" + encodeURIComponent(siteCode), 15000);
-    if (res && res.ok && Array.isArray(res.items)) {
-      res.items.forEach(it => {
-        const s = String(it.scl || it.wo || "").trim();
-        if (!s) return;
-        if (!seenSCL[s.toUpperCase()]) {
-          seenSCL[s.toUpperCase()] = true;
-          sclList.push(it);
-        } else {
-          // Update status if it has PDI OUT
-          const existing = sclList.find(x => x.scl.toUpperCase() === s.toUpperCase());
-          if (existing && it.isComplete) {
-            existing.hasOut = true;
-            existing.status = "Lengkap (PDI IN & OUT)";
-            existing.tglOut = it.tglOut;
-            existing.teknisiOut = it.teknisiOut;
-          }
-        }
-      });
-    }
-  } catch(e) {
-    console.log("Apps Script print list fetch:", e);
+  // 3. Gunakan Smart Cache untuk data Google Sheets jika masih baru, atau fetch jika belum ada / expired
+  let resGIn = gvizCacheIn;
+  let resGOut = gvizCacheOut;
+
+  if (forceRefresh || !resGIn || !resGOut || (now - gvizCacheTime > SMART_CACHE_TTL_MS)) {
+    try {
+      const [freshIn, freshOut] = await Promise.all([
+        fetchGvizSheet(SHEET_NAME_IN, 6000).catch(() => null),
+        fetchGvizSheet(SHEET_NAME_OUT, 6000).catch(() => null)
+      ]);
+      if (freshIn) { resGIn = freshIn; gvizCacheIn = freshIn; }
+      if (freshOut) { resGOut = freshOut; gvizCacheOut = freshOut; }
+      if (freshIn || freshOut) gvizCacheTime = Date.now();
+    } catch(e) {}
   }
 
-  // 4. Ambil data resmi dari GViz PDIIN dan pastikan hanya case yang ada di Google Sheets yang muncul
-  try {
-    const resGIn = await fetchGvizSheet(SHEET_NAME_IN, 6000).catch(() => null);
-    if (resGIn) {
+  // 4. Proses data PDIIN dari cache/server
+  if (resGIn) {
+    try {
       const gInRows = parseGvizToDictList(resGIn);
       const serverScls = new Set();
       gInRows.forEach((r, rIdx) => {
-        const rawSite = String(r["Site Service Center"] || "").trim();
+        const rowData = extractRowData(r);
+        const rawSite = String(rowData.site || "").trim();
         if (siteCode && normalizeSite(rawSite) !== siteCode) return;
-        const s = String(r["No SCL"] || r["No CASE"] || r["NO. CASE"] || r["No WO"] || "").trim();
+        const s = String(rowData.scl || "").trim();
         if (!s || !isValidScl(s)) return;
         serverScls.add(s.toUpperCase());
         const existing = sclList.find(x => x.scl.toUpperCase() === s.toUpperCase());
         if (existing) {
           existing.rowIdx = rIdx;
-          if (!existing.tglIn) existing.tglIn = r["Tanggal"] || r["Waktu Submit"] || "";
+          if (!existing.tglIn) existing.tglIn = rowData.date || "";
         } else {
           seenSCL[s.toUpperCase()] = true;
           sclList.push({
             scl: s,
-            model: r["Model Unit"] || "",
-            vin: r["VIN"] || "",
-            tglIn: r["Tanggal"] || r["Waktu Submit"] || "",
+            model: rowData.model || "",
+            vin: rowData.vin || "",
+            tglIn: rowData.date || "",
             rowIdx: rIdx,
             hasOut: false
           });
         }
       });
-      // Filter sclList agar tidak memunculkan case lama yang sudah dihapus/diedit di Google Sheets
       if (serverScls.size > 0) {
         sclList = sclList.filter(it => serverScls.has(String(it.scl || it.wo || "").trim().toUpperCase()));
       }
+    } catch(e) {
+      console.log("Error processing PDIIN rows in print:", e);
     }
-  } catch(e) {
-    console.log("GViz print list fallback:", e);
   }
 
-  // Kumpulkan daftar NO. CASE yang berstatus DRAFT dari database PDOUT agar disaring keluar
+  // 5. Kumpulkan daftar NO. CASE yang berstatus DRAFT dari database PDOUT agar disaring keluar
   const draftSclSet = new Set();
-  try {
-    const resGOut = await fetchGvizSheet(SHEET_NAME_OUT, 6000).catch(() => null);
-    if (resGOut) {
+  if (resGOut) {
+    try {
       const gOutRows = parseGvizToDictList(resGOut);
       const latestOutPerScl = new Map();
       gOutRows.forEach(r => {
@@ -3286,8 +3456,8 @@ async function loadPrintSclList(isSilent = false) {
           draftSclSet.add(outSCL);
         }
       });
-    }
-  } catch(e) {}
+    } catch(e) {}
+  }
 
   // Filter valid SCL & SARING KELUAR SEMUA CASE YANG MASIH MODE DRAFT
   sclList = sclList.filter(it => {
@@ -3328,7 +3498,6 @@ async function loadPrintSclList(isSilent = false) {
   const currentFormSCL = String($("#sclSelect") ? $("#sclSelect").value : "").trim();
 
   if (sclList.length > 0) {
-    // Tentukan default: prioritaskan case yang sedang aktif di PDI OUT jika ada, jika tidak langsung pilih case paling pertama (terbaru)
     let defaultSCL = "";
     if (currentFormSCL && sclList.some(x => x.scl.toUpperCase() === currentFormSCL.toUpperCase())) {
       defaultSCL = currentFormSCL;
@@ -3349,7 +3518,7 @@ async function loadPrintSclList(isSilent = false) {
     sel.disabled = false;
     if (btnPrint) btnPrint.disabled = true;
   }
-  if (!isSilent) hideLoader();
+  if (!isSilent || hasFreshCache) hideLoader();
 }
 
 function onPrintSCLSelected() {
@@ -3497,12 +3666,22 @@ async function executePrintPDF() {
       }
     }
 
-    // 3. Ambil data lengkap dari Google Sheets (PDIIN & PDOUT) via GViz
+    // 3. Ambil data lengkap dari Google Sheets (PDIIN & PDOUT) via Smart Cache (Instan 0 ms!)
     try {
-      const [resGvizIn, resGvizOut] = await Promise.all([
-        fetchGvizSheet(SHEET_NAME_IN).catch(() => null),
-        fetchGvizSheet(SHEET_NAME_OUT).catch(() => null)
-      ]);
+      let resGvizIn = gvizCacheIn;
+      let resGvizOut = gvizCacheOut;
+      const now = Date.now();
+
+      // Gunakan Smart Cache jika masih segar (< 60 detik) dan tidak kosong
+      if (!resGvizIn || !resGvizOut || (now - gvizCacheTime > SMART_CACHE_TTL_MS)) {
+        const [freshIn, freshOut] = await Promise.all([
+          fetchGvizSheet(SHEET_NAME_IN, 6000).catch(() => null),
+          fetchGvizSheet(SHEET_NAME_OUT, 6000).catch(() => null)
+        ]);
+        if (freshIn) { resGvizIn = freshIn; gvizCacheIn = freshIn; }
+        if (freshOut) { resGvizOut = freshOut; gvizCacheOut = freshOut; }
+        if (freshIn || freshOut) gvizCacheTime = Date.now();
+      }
 
       const rowsIn = parseGvizToDictList(resGvizIn);
       const rowsOut = parseGvizToDictList(resGvizOut);
@@ -4332,6 +4511,8 @@ function getLocalPdiInHistory(){
         x.scl = s;
         x.wo = s;
         x.caseNo = s;
+        // Bersihkan kategori yang sebelumnya mungkin sempat salah tersimpan sebagai EV
+        x.cat = detectCategory(x.cat, x.model);
         return x;
       });
   } catch(e){
@@ -4398,7 +4579,10 @@ function showSclLoadingNotification(isLoading, loadedFromServer = true, count = 
       sel.style.cursor = "not-allowed";
     }
   } else {
-    if(btnSpin) btnSpin.style.animation = "";
+    if(btnSpin){
+      btnSpin.style.animation = "none";
+      setTimeout(() => { if (btnSpin) btnSpin.style.animation = ""; }, 50);
+    }
     if(btnRefresh){
       btnRefresh.disabled = false;
       btnRefresh.style.opacity = "1";
@@ -4458,28 +4642,43 @@ function renderSclDropdown(items, preselectSCL="", forceDisabled = false, trigge
 }
 
 // Memuat daftar No SCL Pending (dari PDI IN yang belum selesai di PDI OUT)
-async function loadSCL(preselectSCL="", isSilent = false){
-  if (!isSilent) showLoader();
+async function loadSCL(preselectSCL="", isSilent = false, forceRefresh = false){
   const sel = $("#sclSelect");
-  if(!sel) { if (!isSilent) hideLoader(); return; }
-
   const siteCode = normalizeSite(currentSite || ($("#site") ? $("#site").value : ""));
+
   if(!siteCode){
-    sel.innerHTML = '<option value="">-- Pilih Site Dulu --</option>';
-    sel.disabled = false;
-    sel.style.opacity = "1";
-    sel.style.cursor = "pointer";
+    if(sel){
+      sel.innerHTML = '<option value="">-- Pilih Site Dulu --</option>';
+      sel.disabled = false;
+      sel.style.opacity = "1";
+      sel.style.cursor = "pointer";
+    }
     if (!isSilent) hideLoader();
     return;
   }
 
-  // Wajib disable dropdown case saat proses refresh / sinkronisasi sedang berjalan
-  sel.disabled = true;
-  sel.style.opacity = "0.65";
-  sel.style.cursor = "not-allowed";
+  // =========================================================================
+  // METODE 2: SMART CACHE (Pencegahan Download Berulang & Buka Instan)
+  // Jika cache data Google Sheets masih segar (< 60 detik) dan tidak forceRefresh:
+  // Langsung gunakan data cache seketika (0 ms) tanpa loading dan tanpa re-download!
+  // =========================================================================
+  const now = Date.now();
+  const hasFreshCache = (!forceRefresh && gvizCacheIn && gvizCacheOut && (now - gvizCacheTime < SMART_CACHE_TTL_MS) && Array.isArray(pendingSCLItems) && pendingSCLItems.length > 0);
+
+  if (hasFreshCache) {
+    if (!isSilent) hideLoader();
+    showSclLoadingNotification(false, true, pendingSCLItems.length);
+    renderSclDropdown(pendingSCLItems, preselectSCL, false);
+    if(sel){
+      sel.disabled = false;
+      sel.style.opacity = "1";
+      sel.style.cursor = "pointer";
+    }
+    return;
+  }
 
   // 1. LANGKAH CEPAT (INSTAN LOKAL):
-  // Render opsi lokal tetapi TETAP KUNCI (disabled=true) agar user tidak memilih sebelum refresh selesai
+  // Tampilkan opsi lokal yang sudah ada seketika agar layar langsung terisi
   const localRecords = getLocalPdiInHistory().filter(r => {
     const s = String(r.scl || r.wo || r.caseNo || "").trim().toUpperCase();
     if(!isValidScl(s)) return false;
@@ -4489,23 +4688,35 @@ async function loadSCL(preselectSCL="", isSilent = false){
   }).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
   if(pendingSCLItems && pendingSCLItems.length > 0){
-    renderSclDropdown(pendingSCLItems, preselectSCL, true);
+    renderSclDropdown(pendingSCLItems, preselectSCL, false);
   } else if(localRecords.length > 0){
     pendingSCLItems = localRecords;
-    renderSclDropdown(pendingSCLItems, preselectSCL, true);
+    renderSclDropdown(pendingSCLItems, preselectSCL, false);
   } else {
-    sel.innerHTML = '<option value="" disabled selected>Memuat Data..</option>';
-    sel.disabled = true;
-    sel.style.opacity = "0.65";
-    sel.style.cursor = "not-allowed";
+    if(sel){
+      sel.innerHTML = '<option value="" disabled selected>Memuat Data..</option>';
+      sel.disabled = true;
+      sel.style.opacity = "0.65";
+      sel.style.cursor = "not-allowed";
+    }
   }
 
-  // 2. MUNCULKAN NOTIFIKASI LOADING & KUNCI TOMBOL REFRESH
-  if (!isSilent) showSclLoadingNotification(true);
+  // Hanya munculkan loader layar penuh jika data lokal benar-benar kosong di perangkat
+  // atau saat pengguna secara sengaja menekan tombol REFRESH manual (forceRefresh)
+  const shouldShowLoader = !isSilent && (!pendingSCLItems || pendingSCLItems.length === 0 || forceRefresh);
+  if (shouldShowLoader) {
+    showLoader();
+  }
+
+  // 2. MUNCULKAN INDIKATOR PUTAR PADA TOMBOL REFRESH
+  showSclLoadingNotification(true);
 
   let serverItems = [];
   let completedSet = {};
   let loadedFromServer = false;
+  let finalItems = [];
+
+  try {
 
   // 3. AMBIL DATA TERBARU DARI GOOGLE SHEETS SECARA REAL-TIME (GViz PDIIN & PDOUT)
   try {
@@ -4513,6 +4724,9 @@ async function loadSCL(preselectSCL="", isSilent = false){
       fetchGvizSheet(SHEET_NAME_IN, 8000).catch(() => null),
       fetchGvizSheet(SHEET_NAME_OUT, 8000).catch(() => null)
     ]);
+    if(resIn) gvizCacheIn = resIn;
+    if(resOut) gvizCacheOut = resOut;
+    if(resIn || resOut) gvizCacheTime = Date.now();
 
     const serverDraftMap = new Map();
     // Daftarkan semua NO. CASE di PDOUT: Pisahkan status DRAFT vs DONE secara akurat
@@ -4566,22 +4780,21 @@ async function loadSCL(preselectSCL="", isSilent = false){
     if(resIn){
       const rowsIn = parseGvizToDictList(resIn);
       rowsIn.forEach(r => {
-        const rawSite = String(r["Site Service Center"] || "").trim();
+        const rowData = extractRowData(r);
+        const rawSite = rowData.site;
         if(siteCode && normalizeSite(rawSite) !== siteCode) return;
 
-        const scl = String(r["No SCL"] || r["No CASE"] || r["NO. CASE"] || r["No WO"] || "").trim();
+        const scl = rowData.scl;
         if(!scl || !isValidScl(scl)) return;
 
         const cleanSCL = scl.toUpperCase();
         if(completedSet[cleanSCL] || isSclCompletedLocally(cleanSCL)) return;
 
-        const model = String(r["Model Unit"] || "").trim();
-        const vin = String(r["VIN"] || "").trim();
-        const layanan = String(r["Jenis Layanan"] || "").trim().toUpperCase();
-        const teknisi = String(r["Teknisi"] || "").trim();
-        const rawCat = String(r["Kategori Produk"] || "").trim();
-
-        let normCat = normalizeCategory(rawCat);
+        const model = rowData.model;
+        const vin = rowData.vin;
+        const layanan = rowData.layanan;
+        const teknisi = rowData.teknisi;
+        let normCat = rowData.cat;
 
         const hasServerDraft = serverDraftMap.has(cleanSCL);
         let draftDataObj = serverDraftMap.get(cleanSCL) || null;
@@ -4590,6 +4803,11 @@ async function loadSCL(preselectSCL="", isSilent = false){
             const locDraft = localStorage.getItem("pdi_draft_out_" + cleanSCL);
             if(locDraft) draftDataObj = JSON.parse(locDraft);
           } catch(e){}
+        }
+
+        if(draftDataObj){
+          const draftCat = extractRowData(draftDataObj).cat;
+          if(draftCat && draftCat !== "-") normCat = draftCat;
         }
 
         serverItems.push({
@@ -4602,9 +4820,10 @@ async function loadSCL(preselectSCL="", isSilent = false){
           layanan: layanan,
           teknisi: teknisi,
           site: rawSite || siteCode,
-          date: r["Tanggal"] || r["Waktu Submit"] || "",
+          date: rowData.date,
           isDraft: hasServerDraft || !!draftDataObj,
-          draftData: draftDataObj
+          draftData: draftDataObj,
+          rawIn: r
         });
       });
       // Pertahankan urutan kronologis tertua paling atas (FIFO) sesuai permintaan user
@@ -4619,6 +4838,9 @@ async function loadSCL(preselectSCL="", isSilent = false){
           r.items.forEach(it => {
             const k = String(it.scl || it.wo || it.caseNo || "").trim().toUpperCase();
             if(isValidScl(k) && !completedSet[k] && !isSclCompletedLocally(k)){
+              // rawCat adalah kategori asli spesifik dari database (AUDIO/VIDEO atau HOME APPLIANCES)
+              const catCandidate = it.rawCat || it.cat;
+              it.cat = detectCategory(catCandidate, it.model);
               serverItems.push(it);
             }
           });
@@ -4708,11 +4930,11 @@ async function loadSCL(preselectSCL="", isSilent = false){
 
   // 5. RENDER DROPDOWN DENGAN DATA TERBARU & BUKA KUNCI (disabled = false) KARENA REFRESH SUDAH SELESAI
   renderSclDropdown(finalItems, preselectSCL, false);
-
-  // 6. SELESAIKAN NOTIFIKASI LOADING & AKTIFKAN KEMBALI DROPDOWN
-  if (!isSilent) showSclLoadingNotification(false, loadedFromServer, finalItems.length);
-
-  if (!isSilent || !finalItems || finalItems.length === 0) {
+  } catch(errLoadAll) {
+    console.warn("Peringatan saat sinkronisasi daftar kasus:", errLoadAll);
+  } finally {
+    // 6. SELALU HENTIKAN PUTARAN TOMBOL REFRESH & AKTIFKAN KEMBALI TOMBOL (TANPA TERGANTUNG isSilent)
+    showSclLoadingNotification(false, loadedFromServer, (finalItems && finalItems.length) || 0);
     if (!isSilent) hideLoader();
   }
 }
@@ -4777,7 +4999,7 @@ function resetChecklistAndInputs(){
 // Khusus PDI OUT: Apabila No Case = "-", set kotak Kategori dan Nama Teknisi = "-"
 function applyDashPdiOutFields(){
   if(cur !== "OUT") return;
-  // 1. Kotak Kategori = -
+  // 1. Kotak Kategori = - (Tetap bisa diedit)
   const catOut = $("#catOut");
   if(catOut){
     let optDash = Array.from(catOut.options).find(o => o.value === "-");
@@ -4789,22 +5011,47 @@ function applyDashPdiOutFields(){
     }
     catOut.value = "-";
     cat = "-";
-    catOut.style.pointerEvents = "none";
-    catOut.style.backgroundColor = "#e9ecef";
+    catOut.style.pointerEvents = "auto";
+    catOut.style.backgroundColor = "#ffffff";
+    catOut.disabled = false;
   }
-  // 2. Kotak Nama Teknisi = -
+  // 2. Kotak Nama Teknisi = - (Tetap bisa diedit)
   renderTechField(currentSite, "-");
   const techSel = $("#techSelect");
   if(techSel){
     techSel.value = "-";
-    techSel.style.pointerEvents = "none";
-    techSel.style.backgroundColor = "#e9ecef";
+    techSel.style.pointerEvents = "auto";
+    techSel.style.backgroundColor = "#ffffff";
+    techSel.disabled = false;
+    techSel.readOnly = false;
   }
-  // Bersihkan field yang sebelumnya terisi otomatis jika case menjadi -
-  const modelEl = $("#modelInput");
-  if(modelEl) modelEl.value = "";
-  const seriEl = $("#seriInput");
-  if(seriEl) seriEl.value = "";
+  // Bersihkan field yang sebelumnya terisi otomatis jika case menjadi - (Semua tetap bisa diedit)
+  const modelEl = $("#modelInput") || (document.querySelector('#f [name="Model Unit"]'));
+  if(modelEl) {
+    modelEl.value = "";
+    modelEl.readOnly = false;
+    modelEl.style.backgroundColor = "#ffffff";
+    modelEl.style.pointerEvents = "auto";
+  }
+  const seriEl = $("#seriInput") || (document.querySelector('#f [name="VIN"]'));
+  if(seriEl) {
+    seriEl.value = "";
+    seriEl.readOnly = false;
+    seriEl.style.backgroundColor = "#ffffff";
+    seriEl.style.pointerEvents = "auto";
+  }
+  const layananEl = $("#layananInput") || (document.querySelector('#f [name="Jenis Layanan"]'));
+  if(layananEl) {
+    layananEl.style.pointerEvents = "auto";
+    layananEl.style.backgroundColor = "#ffffff";
+    layananEl.disabled = false;
+  }
+  const siteEl = $("#site") || (document.querySelector('#f [name="Site Service Center"]'));
+  if(siteEl) {
+    siteEl.style.pointerEvents = "auto";
+    siteEl.style.backgroundColor = "#ffffff";
+    siteEl.disabled = false;
+  }
   resetChecklistAndInputs();
 }
 
@@ -4812,23 +5059,31 @@ let sclChangeTimeout = null;
 let currentReadingScl = null;
 
 // Fungsi Utama Membaca / Mengambil Data Terkini Kasus dari Database Google Sheets (PDI IN & PDI OUT)
-async function bacaDataCase(sclVal){
+async function bacaDataCase(sclVal, forceServer = false){
   if(!sclVal || sclVal === "-") return;
   const targetScl = String(sclVal).trim().toUpperCase();
   currentReadingScl = targetScl;
 
   const btnSpin = $("#refreshSclIcon");
   if(btnSpin) btnSpin.style.animation = "spin 1s linear infinite";
-  showLoader();
 
   try {
     const siteCode = normalizeSite(currentSite || ($("#site") ? $("#site").value : ""));
 
-    // 1. Ambil data real-time dari Google Sheets (PDIIN & PDOUT)
-    const [resIn, resOut] = await Promise.all([
-      fetchGvizSheet(SHEET_NAME_IN, 8000).catch(() => null),
-      fetchGvizSheet(SHEET_NAME_OUT, 8000).catch(() => null)
-    ]);
+    // Gunakan cache jika masih baru (< 30 detik) dan tidak forceServer
+    let resIn = gvizCacheIn;
+    let resOut = gvizCacheOut;
+    const now = Date.now();
+
+    if(forceServer || !resIn || !resOut || (now - gvizCacheTime > 30000)){
+      const [freshIn, freshOut] = await Promise.all([
+        fetchGvizSheet(SHEET_NAME_IN, 6000).catch(() => null),
+        fetchGvizSheet(SHEET_NAME_OUT, 6000).catch(() => null)
+      ]);
+      if(freshIn) { resIn = freshIn; gvizCacheIn = freshIn; }
+      if(freshOut) { resOut = freshOut; gvizCacheOut = freshOut; }
+      if(freshIn || freshOut) gvizCacheTime = Date.now();
+    }
 
     // Cegah race condition jika pengguna sudah mengganti No Case lain saat fetch sedang berjalan
     const sel = $("#sclSelect");
@@ -4841,8 +5096,8 @@ async function bacaDataCase(sclVal){
     if(resOut){
       const rowsOut = parseGvizToDictList(resOut);
       for(let j = rowsOut.length - 1; j >= 0; j--){
-        const s = String(rowsOut[j]["No SCL"] || rowsOut[j]["No CASE"] || rowsOut[j]["NO. CASE"] || rowsOut[j]["No WO"] || "").trim().toUpperCase();
-        if(s === targetScl){
+        const rowData = extractRowData(rowsOut[j]);
+        if(rowData.scl === targetScl){
           outRow = rowsOut[j];
           break;
         }
@@ -4852,8 +5107,8 @@ async function bacaDataCase(sclVal){
     if(resIn){
       const rowsIn = parseGvizToDictList(resIn);
       for(let i = rowsIn.length - 1; i >= 0; i--){
-        const s = String(rowsIn[i]["No SCL"] || rowsIn[i]["No CASE"] || rowsIn[i]["NO. CASE"] || rowsIn[i]["No WO"] || "").trim().toUpperCase();
-        if(s === targetScl){
+        const rowData = extractRowData(rowsIn[i]);
+        if(rowData.scl === targetScl){
           inRow = rowsIn[i];
           break;
         }
@@ -4884,10 +5139,9 @@ async function bacaDataCase(sclVal){
         } catch(e){}
 
         toast("Case " + targetScl + " telah selesai (DONE) di database", "#C8102E");
-        await loadSCL();
+        await loadSCL("", true);
         return;
       } else {
-        // Masih DRAFT: simpan data draft database ke cache lokal
         draftDataObj = outRow;
         try {
           localStorage.setItem("pdi_draft_out_" + targetScl, JSON.stringify(outRow));
@@ -4915,31 +5169,33 @@ async function bacaDataCase(sclVal){
 
     // 4. Perbarui data item di pendingSCLItems
     let item = pendingSCLItems.find(x => String(x.scl || x.wo || "").trim().toUpperCase() === targetScl);
-    if(!item && inRow){
+    const inRowParsed = inRow ? extractRowData(inRow) : null;
+
+    if(!item && inRowParsed){
       item = {
         scl: targetScl,
         wo: targetScl,
         caseNo: targetScl,
-        model: String(inRow["Model Unit"] || "").trim(),
-        vin: String(inRow["VIN"] || "").trim(),
-        cat: normalizeCategory(inRow["Kategori Produk"] || ""),
-        layanan: String(inRow["Jenis Layanan"] || "").trim().toUpperCase(),
-        teknisi: String(inRow["Teknisi"] || "").trim(),
-        site: inRow["Site Service Center"] || siteCode,
-        date: inRow["Tanggal"] || inRow["Waktu Submit"] || "",
+        model: inRowParsed.model,
+        vin: inRowParsed.vin,
+        cat: inRowParsed.cat,
+        layanan: inRowParsed.layanan,
+        teknisi: inRowParsed.teknisi,
+        site: inRowParsed.site || siteCode,
+        date: inRowParsed.date,
         isDraft: isDraft,
         draftData: draftDataObj,
         rawIn: inRow
       };
       pendingSCLItems.push(item);
     } else if(item){
-      if(inRow){
-        item.model = String(inRow["Model Unit"] || item.model || "").trim();
-        item.vin = String(inRow["VIN"] || item.vin || "").trim();
-        item.cat = normalizeCategory(inRow["Kategori Produk"] || item.cat);
-        item.layanan = String(inRow["Jenis Layanan"] || item.layanan || "").trim().toUpperCase();
-        item.teknisi = String(inRow["Teknisi"] || item.teknisi || "").trim();
-        item.site = inRow["Site Service Center"] || item.site || siteCode;
+      if(inRowParsed){
+        if(inRowParsed.model) item.model = inRowParsed.model;
+        if(inRowParsed.vin) item.vin = inRowParsed.vin;
+        if(inRowParsed.cat && inRowParsed.cat !== "-") item.cat = inRowParsed.cat;
+        if(inRowParsed.layanan) item.layanan = inRowParsed.layanan;
+        if(inRowParsed.teknisi) item.teknisi = inRowParsed.teknisi;
+        if(inRowParsed.site) item.site = inRowParsed.site;
         item.rawIn = inRow;
       }
       item.isDraft = isDraft;
@@ -4948,24 +5204,20 @@ async function bacaDataCase(sclVal){
 
     // 5. Terapkan data terbaru ke seluruh field formulir PDI OUT
     if(item){
-      const targetCat = normalizeCategory(item.cat);
+      const targetCat = detectCategory(item.cat, item.model);
       const isEvDiff = isEvCategory(targetCat) !== isEvCategory(cat);
       cat = targetCat;
 
       if(isEvDiff){
         render();
         renderSclDropdown(pendingSCLItems, targetScl, false, false);
-      } else {
-        resetChecklistAndInputs();
       }
-
       fillFieldsFromItem(item);
     }
   } catch(errFetch){
     console.warn("Gagal membaca data case dari database:", errFetch);
   } finally {
     if(btnSpin) btnSpin.style.animation = "";
-    hideLoader();
   }
 }
 window.bacaDataCase = bacaDataCase;
@@ -4989,9 +5241,13 @@ function onSCLChange(skipDatabaseFetch = false){
 
  // 1. Tampilkan respon visual instan menggunakan data lokal terlebih dahulu (Zero Latency)
  try {
-   const localItem = pendingSCLItems.find(x => String(x.scl || x.wo || "").trim().toUpperCase() === sclVal);
+   let localItem = pendingSCLItems.find(x => String(x.scl || x.wo || "").trim().toUpperCase() === sclVal);
+   if(!localItem){
+     const hist = getLocalPdiInHistory();
+     localItem = hist.find(x => String(x.scl || x.wo || x.caseNo || "").trim().toUpperCase() === sclVal);
+   }
    if(localItem){
-     const targetCat = normalizeCategory(localItem.cat);
+     const targetCat = detectCategory(localItem.cat, localItem.model);
      const isEvDiff = isEvCategory(targetCat) !== isEvCategory(cat);
      cat = targetCat;
 
@@ -5005,12 +5261,11 @@ function onSCLChange(skipDatabaseFetch = false){
    }
  } catch(e){}
 
- // 2. Otomatis panggil fungsi baca data dari database Google Sheets agar data yang muncul sama dengan database
+ // 2. Otomatis panggil fungsi baca data dari database Google Sheets secara cepat & senyap di latar belakang (tanpa blocking loader)
  if(!skipDatabaseFetch){
-   showLoader();
    if(sclChangeTimeout) clearTimeout(sclChangeTimeout);
    sclChangeTimeout = setTimeout(() => {
-     bacaDataCase(sclVal);
+     bacaDataCase(sclVal, false);
    }, 30);
  }
 }
@@ -5031,23 +5286,25 @@ function fillFieldsFromItem(item){
   } catch(e){}
  }
 
- // 1. Model Unit (Terisi otomatis dari PDI IN, readonly)
+  // 1. Model Unit (Terisi otomatis dan TETAP BISA DIEDIT)
  const modelEl = f.querySelector('[name="Model Unit"]');
  if(modelEl){
   modelEl.value = String(item.model || "").toUpperCase();
-  modelEl.readOnly = true;
-  modelEl.style.backgroundColor = "#e9ecef";
+  modelEl.readOnly = false;
+  modelEl.style.backgroundColor = "#ffffff";
+  modelEl.style.pointerEvents = "auto";
  }
 
- // 2. VIN / No Seri (Terisi otomatis dari PDI IN, readonly)
+ // 2. VIN / No Seri (Terisi otomatis dan TETAP BISA DIEDIT)
  const seriEl = f.querySelector('[name="VIN"]');
  if(seriEl){
   seriEl.value = String(item.vin || "").toUpperCase();
-  seriEl.readOnly = true;
-  seriEl.style.backgroundColor = "#e9ecef";
+  seriEl.readOnly = false;
+  seriEl.style.backgroundColor = "#ffffff";
+  seriEl.style.pointerEvents = "auto";
  }
 
- // 3. Jenis Layanan (Terisi otomatis dari PDI IN, terkunci)
+ // 3. Jenis Layanan (Terisi otomatis dan TETAP BISA DIEDIT)
  const layananEl = f.querySelector('[name="Jenis Layanan"]');
  if(layananEl){
   const layVal = String(item.layanan || "").trim().toUpperCase();
@@ -5066,22 +5323,24 @@ function fillFieldsFromItem(item){
    opt.selected = true;
    layananEl.appendChild(opt);
   }
-  layananEl.style.pointerEvents = "none";
-  layananEl.style.backgroundColor = "#e9ecef";
+  layananEl.style.pointerEvents = "auto";
+  layananEl.style.backgroundColor = "#ffffff";
+  layananEl.disabled = false;
  }
 
- // 4. Site Service Center (Terisi otomatis, terkunci)
+ // 4. Site Service Center (Terisi otomatis dan TETAP BISA DIEDIT)
  const siteEl = f.querySelector('[name="Site Service Center"]');
  if(siteEl){
   siteEl.value = normalizeSite(item.site || currentSite);
-  siteEl.style.pointerEvents = "none";
-  siteEl.style.backgroundColor = "#e9ecef";
+  siteEl.style.pointerEvents = "auto";
+  siteEl.style.backgroundColor = "#ffffff";
+  siteEl.disabled = false;
  }
 
- // 5. Kategori Produk (Terisi otomatis, terkunci)
+ // 5. Kategori Produk (Terisi otomatis sesuai database/model dan TETAP BISA DIEDIT)
  const catOut = document.querySelector("#catOut");
  if(catOut){
-  const targetCat = normalizeCategory(item.cat);
+  const targetCat = detectCategory(item.cat, item.model);
   if(targetCat && targetCat !== "-"){
     let optExists = Array.from(catOut.options).some(o => o.value === targetCat);
     if(!optExists){
@@ -5096,11 +5355,12 @@ function fillFieldsFromItem(item){
     catOut.value = "-";
     cat = "-";
   }
-  catOut.style.pointerEvents = "none";
-  catOut.style.backgroundColor = "#e9ecef";
+  catOut.style.pointerEvents = "auto";
+  catOut.style.backgroundColor = "#ffffff";
+  catOut.disabled = false;
  }
 
- // 6. Teknisi: Sesuaikan otomatis dengan data database (PDI IN atau DRAFT)
+ // 6. Teknisi (Terisi otomatis dan TETAP BISA DIEDIT)
  let targetTeknisi = "";
  if (isDraft && draftData && (draftData["Teknisi"] || draftData["teknisi"])) {
    targetTeknisi = String(draftData["Teknisi"] || draftData["teknisi"]).trim();
@@ -5118,7 +5378,7 @@ function fillFieldsFromItem(item){
    techSel.style.backgroundColor = "#ffffff";
  }
 
- // 7. PENGISIAN DATA DRAFT JIKA NO CASE MERUPAKAN DRAFT
+// 7. PENGISIAN DATA DRAFT JIKA NO CASE MERUPAKAN DRAFT
  const btnDraft = $("#btnSaveDraft");
  const btnFinal = $("#btnSavePdiOut");
 
@@ -5859,7 +6119,7 @@ function openTechSigModal(push = true) {
   if (!modal) return;
   modal.style.display = "flex";
   if (push) {
-    history.pushState({ modal: "techSig", tab: cur }, "", "#modal-tech-sig");
+    safeHistoryPush({ modal: "techSig", tab: cur }, "#modal-tech-sig");
   }
 
   // Isi dropdown teknisi berdasarkan site aktif
@@ -5896,7 +6156,7 @@ function closeTechSigModal(fromBack = false) {
   if (modal) modal.style.display = "none";
   if (!fromBack && location.hash === "#modal-tech-sig") {
     try {
-      history.replaceState({ tab: cur }, "", cur === "OUT" ? "#pdi-out" : "#pdi-in");
+      safeHistoryReplace({ tab: cur }, cur === "OUT" ? "#pdi-out" : "#pdi-in");
     } catch(e) {
       history.back();
     }
@@ -6507,7 +6767,7 @@ function openConfirmModal(config, onConfirm) {
   }
 
   modal.style.display = "flex";
-  history.pushState({ modal: "confirm" }, "", "#modal-confirm");
+  safeHistoryPush({ modal: "confirm" }, "#modal-confirm");
 }
 
 function closeConfirmModal(fromBack = false) {
@@ -6517,11 +6777,11 @@ function closeConfirmModal(fromBack = false) {
   if (!fromBack && location.hash === "#modal-confirm") {
     if (isModalOpen("#techSigModal")) {
       try {
-        history.replaceState({ modal: "techSig", tab: cur }, "", "#modal-tech-sig");
+        safeHistoryReplace({ modal: "techSig", tab: cur }, "#modal-tech-sig");
       } catch(e) {}
     } else {
       try {
-        history.replaceState({ tab: cur }, "", cur === "OUT" ? "#pdi-out" : "#pdi-in");
+        safeHistoryReplace({ tab: cur }, cur === "OUT" ? "#pdi-out" : "#pdi-in");
       } catch(e) {}
     }
   }
@@ -6609,7 +6869,7 @@ async function executePdiOutDraft(cleanSclKey, isUpdatingDraft){
     }
 
     const fields = {
-      "Kategori Produk": cat,
+      "Kategori Produk": (cur === "OUT" && $("#catOut") && $("#catOut").value && $("#catOut").value !== "-") ? $("#catOut").value : cat,
       "Tanggal": d.get("Tanggal") || (f.querySelector('[name="Tanggal"]') ? f.querySelector('[name="Tanggal"]').value : ""),
       "No CASE": noSCL,
       "NO. CASE": noSCL,
@@ -6948,7 +7208,7 @@ async function executeFormSubmit(noSCL){
 
  // Mengirim No CASE, NO. CASE, No SCL, No WO agar kompatibel 100% dengan Google Sheets
  const fields = {
-  "Kategori Produk": cat,
+  "Kategori Produk": (cur === "OUT" && $("#catOut") && $("#catOut").value && $("#catOut").value !== "-") ? $("#catOut").value : cat,
   "Tanggal": d.get("Tanggal") || (f.querySelector('[name="Tanggal"]') ? f.querySelector('[name="Tanggal"]').value : ""),
   "No CASE": noSCL,
   "NO. CASE": noSCL,
@@ -7253,7 +7513,33 @@ async function executeFormSubmit(noSCL){
  setTimeout(processSyncQueue, 150);
 }
 
-history.replaceState({tab:"IN"}, "", "#pdi-in");
+safeHistoryReplace({tab:"IN"}, "#pdi-in");
+
+
+// Helper History API aman untuk protokol file:// dan web browser
+function safeHistoryPush(stateObj, urlStr) {
+  try {
+    if (window.location.protocol === "file:") {
+      history.pushState(stateObj, "");
+    } else {
+      history.pushState(stateObj, "", urlStr);
+    }
+  } catch(e) {
+    try { history.pushState(stateObj, ""); } catch(e2){}
+  }
+}
+
+function safeHistoryReplace(stateObj, urlStr) {
+  try {
+    if (window.location.protocol === "file:") {
+      history.replaceState(stateObj, "");
+    } else {
+      history.replaceState(stateObj, "", urlStr);
+    }
+  } catch(e) {
+    try { history.replaceState(stateObj, ""); } catch(e2){}
+  }
+}
 
 function tab(w, push=true){
  if(w === "IN"){
@@ -7264,7 +7550,7 @@ function tab(w, push=true){
    cat = "-";
  }
  if(cur === w) {
-  if(w === "OUT") loadSCL();
+  if(w === "OUT") loadSCL("", true, false);
   if(w === "IN") render();
   return;
  }
@@ -7280,13 +7566,13 @@ function tab(w, push=true){
  $("#t-out").classList.toggle("on", w === "OUT");
  if(push){
   if(w === "OUT"){
-   history.pushState({tab:"OUT"}, "", "#pdi-out");
+   safeHistoryPush({tab:"OUT"}, "#pdi-out");
   } else {
    // Saat berpindah ke PDI IN, timpa history agar tidak meninggalkan jejak #pdi-out di tumpukan back
-   history.replaceState({tab:"IN"}, "", "#pdi-in");
+   safeHistoryReplace({tab:"IN"}, "#pdi-in");
   }
  } else {
-  history.replaceState({tab:w}, "", w === "OUT" ? "#pdi-out" : "#pdi-in");
+  safeHistoryReplace({tab:w}, w === "OUT" ? "#pdi-out" : "#pdi-in");
  }
  if(w === "IN"){
    cat = "";
@@ -7294,7 +7580,8 @@ function tab(w, push=true){
  render();
  syncTopNavSpacer();
  if(w === "OUT"){
-  loadSCL();
+  // Smart Cache: Buka instan tanpa loader layar penuh jika data lokal sudah tersedia
+  loadSCL("", true, false);
  }
  const appScrollEl = $("#app"); if(appScrollEl) appScrollEl.scrollTo({top:0, behavior:"smooth"});
 }
@@ -7365,7 +7652,7 @@ function handleAndroidBack() {
   // 3. Jika sedang di menu PDI IN:
   // JANGAN PERNAH pindah ke menu PDI OUT!
   try {
-    history.replaceState({tab:"IN"}, "", "#pdi-in");
+    safeHistoryReplace({tab:"IN"}, "#pdi-in");
   } catch(e){}
 
   // Tampilkan notifikasi keluar
@@ -7421,7 +7708,7 @@ window.addEventListener("popstate", e => {
  // Jika posisi berada di menu PDI IN: JANGAN PERNAH beralih ke PDI OUT!
  if (cur === "IN") {
   try {
-   history.pushState({tab:"IN"}, "", "#pdi-in");
+   safeHistoryPush({tab:"IN"}, "#pdi-in");
   } catch(err){}
   showExitNotification();
   return;
@@ -7669,7 +7956,7 @@ async function startScanner(push = true) {
   const modal = $("#scannerModal");
   modal.style.display = "flex";
   if (push) {
-    history.pushState({modal:"scanner", tab:cur}, "", "#modal-scanner");
+    safeHistoryPush({modal:"scanner", tab:cur}, "#modal-scanner");
   }
 
   // 1. Cek keamanan protokol HTTPS jika di web browser umum
